@@ -118,8 +118,77 @@
 
   <div id="summary"></div>
   <div id="results"></div>
+
+  <div class="card">
+    <h2 style="margin:0 0 4px;font-size:17px">🧮 月末机队利用率核对</h2>
+    <p class="note" style="margin:0 0 10px">
+      清洗导出的 UTC 航段 CSV 按<b>批号</b>入仓：同一航段报在多个批次也不重复计；
+      同机尾同 UTC 日的重叠时段只算一次。重传同批号 = 整批替换；只传表头 = 撤回该批。
+    </p>
+    <div class="upload-bar">
+      <input type="text" id="batchId" placeholder="批号，如 2026-10-A"
+             style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:7px 10px;width:180px">
+      <input type="file" id="batchFile" accept=".csv,text/csv">
+      <button id="batchUploadBtn" disabled>上传 / 换批</button>
+      <span class="file-name" id="batchFileName">未选择文件</span>
+    </div>
+    <div class="upload-bar" style="margin-top:10px">
+      <span class="note">演示脚本：</span>
+      <button class="secondary" id="demoA">① 上传批次A</button>
+      <button class="secondary" id="demoB">② 上传批次B（跨日+重叠）</button>
+      <button class="secondary" id="demoA2">③ 换批：重传批次A(v2)</button>
+      <button class="secondary" id="demoWithdraw">④ 撤批：仅表头上传批次B</button>
+    </div>
+    <details>
+      <summary>入仓规则与演示预期</summary>
+      <ul>
+        <li>CSV 格式与清洗导出一致：<code>tail_number,seq,dep_utc,arr_utc,duration_minutes</code>（UTC，ISO 8601）；</li>
+        <li>航段按 UTC 午夜拆分，<b>含起飞、不含落地</b>：恰好 00:00 落地的航段在落地日计 0 秒；</li>
+        <li>同一机尾同一 UTC 日期，所有批次的重叠时段取并集，只计一次；</li>
+        <li>任何坏行 → 整批退回，数据库不变；批次与汇总在同一 SQLite 事务提交；</li>
+        <li>只重算旧批/新批覆盖到的 (机尾, 日期) 组合；并发换批等同于逐批串行提交。</li>
+      </ul>
+      <p>演示脚本预期（上传后可对照下方汇总表与查询结果）：</p>
+      <table>
+        <thead><tr><th>步骤</th><th>操作</th><th>预期覆盖秒数变化</th></tr></thead>
+        <tbody>
+          <tr><td>①</td><td>批次A（B-7001 跨日航段 23:30→01:15）</td>
+            <td>B-7001@2026-10-24 = 1800；B-7001@2026-10-25 = 11700；B-7002@2026-10-25 = 9000</td></tr>
+          <tr><td>②</td><td>批次B（重复报送同一跨日航段 + 重叠航段 07:00→09:00）</td>
+            <td>B-7001@2026-10-25 = 15300（重叠只算一次）；B-7003@2026-10-25 = 5400、@2026-10-26 = 5400（跨日拆分）</td></tr>
+          <tr><td>③</td><td>换批：批次A 整批替换为 v2</td>
+            <td>B-7001@2026-10-24 = 10800；B-7001@2026-10-25 = 11700；B-7002@2026-10-25 = 3600</td></tr>
+          <tr><td>④</td><td>撤批：仅表头文件上传批次B</td>
+            <td>B-7001@2026-10-25 = 0；B-7003 两天均 0；B-7001@2026-10-24 = 9000</td></tr>
+        </tbody>
+      </table>
+    </details>
+    <div id="batch-result"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 10px;font-size:17px">🔎 覆盖秒数查询（按机尾 + UTC 日期）</h2>
+    <div class="upload-bar">
+      <input type="text" id="qTail" placeholder="机尾号，如 B-7001" value="B-7001"
+             style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:7px 10px;width:160px">
+      <input type="date" id="qDate" value="2026-10-25"
+             style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 10px">
+      <button id="covQueryBtn">查询覆盖秒数</button>
+      <span id="covResult" class="mono" style="font-size:16px"></span>
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:14px">
+      <div style="flex:1;min-width:280px">
+        <h4 style="margin:0 0 4px;color:var(--muted)">已入仓批次</h4>
+        <div id="batchTable"></div>
+      </div>
+      <div style="flex:2;min-width:320px">
+        <h4 style="margin:0 0 4px;color:var(--muted)">覆盖汇总（机尾 × UTC 日期）</h4>
+        <div id="covTable"></div>
+      </div>
+    </div>
+  </div>
 </main>
-<footer>仅整链唯一解的机尾允许入仓 · 重复时刻双候选求解 · 不存在时刻硬性报错</footer>
+<footer>仅整链唯一解的机尾允许入仓 · 批次换/撤与汇总同事务提交 · 重叠时段只计一次</footer>
 
 <script>
 let currentFile = null;
@@ -314,6 +383,129 @@ async function doExport(tail) {
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
+// ---------------------------------------------------------------------------
+// 月末机队利用率核对
+// ---------------------------------------------------------------------------
+const UTIL_HEADER = 'tail_number,seq,dep_utc,arr_utc,duration_minutes\n';
+let batchFileObj = null;
+
+function refreshUploadBtn() {
+  $('batchUploadBtn').disabled = !(batchFileObj && $('batchId').value.trim());
+}
+
+$('batchFile').addEventListener('change', (e) => {
+  batchFileObj = e.target.files[0] || null;
+  $('batchFileName').textContent = batchFileObj ? batchFileObj.name : '未选择文件';
+  refreshUploadBtn();
+});
+$('batchId').addEventListener('input', refreshUploadBtn);
+$('batchUploadBtn').addEventListener('click', () => {
+  if (batchFileObj) submitBatch($('batchId').value.trim(), batchFileObj);
+});
+
+async function submitBatch(batchId, file) {
+  const fd = new FormData();
+  fd.append('batch_id', batchId);
+  fd.append('file', file);
+  const resp = await fetch('/api/batches', {method: 'POST', body: fd});
+  const data = await resp.json();
+  if (!resp.ok) { showBatchError(data.detail); return null; }
+  showBatchResult(data);
+  await refreshTables();
+  runQuery();  // 查询框联动刷新
+  return data;
+}
+
+const ACTION_LABEL = {
+  loaded: '✅ 已入仓', replaced: '♻️ 已整批替换',
+  withdrawn: '🗑 已撤回该批', withdraw_noop: 'ℹ️ 该批号本就不存在，无需撤回',
+};
+
+function showBatchResult(r) {
+  const aff = r.affected.map(a =>
+    `<tr><td>${esc(a.tail_number)}</td><td>${a.utc_date}</td><td>${a.covered_seconds}</td></tr>`
+  ).join('');
+  $('batch-result').innerHTML = `<div class="sol-block" style="border-color:var(--green)">
+    <b>${ACTION_LABEL[r.action] || r.action}</b>：批次 <code>${esc(r.batch_id)}</code>，
+    数据行 ${r.rows}，重算 ${r.affected.length} 个 (机尾, 日期) 组合：
+    <table><thead><tr><th>机尾</th><th>UTC 日期</th><th>覆盖秒数</th></tr></thead>
+    <tbody>${aff || '<tr><td colspan="3">无受影响组合</td></tr>'}</tbody></table>
+  </div>`;
+}
+
+function showBatchError(detail) {
+  let html;
+  if (detail && typeof detail === 'object' && detail.errors) {
+    const items = detail.errors.map(e =>
+      `<li>第 ${e.row} 行：${e.messages.map(esc).join('；')}</li>`).join('');
+    html = `<b>⛔ ${esc(detail.message)}</b><ul style="margin:6px 0">${items}</ul>`;
+  } else {
+    html = `<b>⛔ ${esc(typeof detail === 'string' ? detail : '上传失败')}</b>`;
+  }
+  $('batch-result').innerHTML = `<div class="error-box">${html}</div>`;
+}
+
+async function loadUtilSample(name, batchId) {
+  const resp = await fetch('/api/utilization-sample/' + name);
+  const blob = await resp.blob();
+  const file = new File([blob], name + '.csv', {type: 'text/csv'});
+  $('batchId').value = batchId;
+  batchFileObj = file;
+  $('batchFileName').textContent = file.name;
+  refreshUploadBtn();
+  return submitBatch(batchId, file);
+}
+
+$('demoA').addEventListener('click', () => loadUtilSample('a', '2026-10-A'));
+$('demoB').addEventListener('click', () => loadUtilSample('b', '2026-10-B'));
+$('demoA2').addEventListener('click', () => loadUtilSample('a2', '2026-10-A'));
+$('demoWithdraw').addEventListener('click', () => {
+  const file = new File([UTIL_HEADER], 'header_only.csv', {type: 'text/csv'});
+  $('batchId').value = '2026-10-B';
+  batchFileObj = file;
+  $('batchFileName').textContent = 'header_only.csv（仅表头）';
+  refreshUploadBtn();
+  submitBatch('2026-10-B', file);
+});
+
+async function refreshTables() {
+  const [b, c] = await Promise.all([
+    fetch('/api/batches').then(r => r.json()),
+    fetch('/api/coverage/table').then(r => r.json()),
+  ]);
+  $('batchTable').innerHTML = b.batches.length
+    ? `<table><thead><tr><th>批号</th><th>数据行</th><th>入仓时间(UTC)</th></tr></thead><tbody>` +
+      b.batches.map(x =>
+        `<tr><td>${esc(x.batch_id)}</td><td>${x.row_count}</td><td>${esc(x.uploaded_at)}</td></tr>`
+      ).join('') + '</tbody></table>'
+    : '<p class="note">暂无批次</p>';
+  $('covTable').innerHTML = c.rows.length
+    ? `<table><thead><tr><th>机尾</th><th>UTC 日期</th><th>覆盖秒数</th></tr></thead><tbody>` +
+      c.rows.map(x =>
+        `<tr><td>${esc(x.tail_number)}</td><td>${x.utc_date}</td><td>${x.covered_seconds}</td></tr>`
+      ).join('') + '</tbody></table>'
+    : '<p class="note">暂无覆盖数据</p>';
+}
+
+async function runQuery() {
+  const tail = $('qTail').value.trim();
+  const date = $('qDate').value;
+  if (!tail || !date) { $('covResult').textContent = ''; return; }
+  const resp = await fetch(`/api/coverage?tail=${encodeURIComponent(tail)}&date=${date}`);
+  const data = await resp.json();
+  if (!resp.ok) {
+    $('covResult').textContent = '⚠ ' + (data.detail || '查询失败');
+    return;
+  }
+  const hrs = (data.covered_seconds / 3600).toFixed(2);
+  $('covResult').innerHTML =
+    `${esc(data.tail_number)} @ ${data.utc_date} → <b>${data.covered_seconds}</b> 秒（${hrs} 小时）`;
+}
+$('covQueryBtn').addEventListener('click', runQuery);
+
+refreshTables();
+runQuery();
 </script>
 </body>
 </html>

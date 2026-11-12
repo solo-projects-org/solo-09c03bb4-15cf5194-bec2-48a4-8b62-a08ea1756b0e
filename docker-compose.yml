@@ -4,4 +4,9 @@ services:
     container_name: dst-time-cleaner
     ports:
       - "8000:8000"
+    volumes:
+      - utilization-data:/app/data
     restart: unless-stopped
+
+volumes:
+  utilization-data:
