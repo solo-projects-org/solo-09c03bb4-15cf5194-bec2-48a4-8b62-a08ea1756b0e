@@ -1,0 +1,7 @@
+services:
+  web:
+    build: .
+    container_name: dst-time-cleaner
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

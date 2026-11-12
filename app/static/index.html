@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>航段时间清洗 · DST 安全入仓</title>
+<style>
+  :root {
+    --bg: #0f1720; --panel: #18222e; --panel2: #1f2c3b; --line: #2c3d50;
+    --text: #e6edf3; --muted: #8fa3b8; --accent: #4da3ff;
+    --green: #2ea043; --green-bg: #12261a; --red: #f85149; --red-bg: #2d1416;
+    --amber: #d29922; --amber-bg: #2b2110; --gray-bg: #1c242e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    padding: 20px 28px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #16202c, #101822);
+  }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--muted); }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 28px 60px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  .upload-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button {
+    background: var(--accent); color: #06121f; border: 0; border-radius: 7px;
+    padding: 8px 16px; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.export { background: var(--green); color: #fff; padding: 5px 12px; font-size: 13px; }
+  input[type=file] { color: var(--muted); }
+  .file-name { color: var(--muted); }
+  details { margin-top: 12px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--accent); }
+  details code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; font-size: 13px; }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  td { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; }
+  .summary-chips { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+  .chip {
+    padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    background: var(--panel2); border: 1px solid var(--line);
+  }
+  .chip.green { color: #7ee2a0; border-color: var(--green); }
+  .chip.red { color: #ff9d97; border-color: var(--red); }
+  .chip.amber { color: #f0c36d; border-color: var(--amber); }
+  .tail-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tail-head h2 { margin: 0; font-size: 17px; }
+  .badge { padding: 3px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; }
+  .badge.unique { background: var(--green-bg); color: #7ee2a0; border: 1px solid var(--green); }
+  .badge.no_solution { background: var(--red-bg); color: #ff9d97; border: 1px solid var(--red); }
+  .badge.multiple { background: var(--amber-bg); color: #f0c36d; border: 1px solid var(--amber); }
+  .badge.error { background: var(--red-bg); color: #ff9d97; border: 1px solid var(--red); }
+  .note { color: var(--muted); font-size: 13px; }
+  .conflict-box {
+    background: var(--red-bg); border: 1px solid var(--red);
+    border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+  }
+  .warn-box {
+    background: var(--amber-bg); border: 1px solid var(--amber);
+    border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+  }
+  .error-box {
+    background: var(--red-bg); border: 1px solid var(--red);
+    border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+  }
+  .cand { color: var(--amber); }
+  .chosen { color: #7ee2a0; font-weight: 700; }
+  .sol-block { margin-top: 10px; border: 1px dashed var(--line); border-radius: 8px; padding: 8px 12px; }
+  .sol-block h4 { margin: 4px 0; color: var(--amber); }
+  #global-error { display: none; }
+  .spacer { flex: 1; }
+  footer { color: var(--muted); text-align: center; padding: 24px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛫 航段时间清洗 · DST 安全入仓</h1>
+  <p>把地服导出的「当地时间」航段解析为唯一 UTC 航段链，避免夏令时切换时错误入仓。</p>
+</header>
+<main>
+  <div class="card">
+    <div class="upload-bar">
+      <input type="file" id="fileInput" accept=".csv,text/csv">
+      <button class="secondary" id="sampleBtn">📦 载入内置夏令时样例</button>
+      <button id="solveBtn" disabled>开始清洗</button>
+      <span class="file-name" id="fileName">未选择文件</span>
+      <span class="spacer"></span>
+      <button class="export" id="exportAllBtn" disabled>⬇ 导出全部可导出机尾</button>
+    </div>
+    <details>
+      <summary>CSV 格式与求解规则</summary>
+      <p>必需表头（UTF-8 编码）：</p>
+      <p><code>tail_number,seq,dep_local,dep_tz,arr_local,arr_tz,duration_min_minutes,duration_max_minutes</code></p>
+      <ul>
+        <li><code>dep_local / arr_local</code>：当地时间，格式 <code>YYYY-MM-DD HH:MM</code>（不含时区偏移）；</li>
+        <li><code>dep_tz / arr_tz</code>：IANA 时区名，如 <code>Europe/Berlin</code>、<code>America/New_York</code>；</li>
+        <li><code>duration_*</code>：飞行时长下/上限（分钟，闭区间）；<code>seq</code> 为同一机尾内的航段顺序（整数，从 1 起）。</li>
+      </ul>
+      <ul>
+        <li>当地时间不存在（春季拨快空洞）→ 该行报错，整架机尾禁止导出；</li>
+        <li>当地时间重复（秋季拨回重叠）→ 保留两个 UTC 候选参与整链求解；</li>
+        <li>约束：飞行时长 ∈ [下限, 上限]，且下一段起飞不得早于上一段落地；</li>
+        <li>整链<b>唯一解</b>才允许导出该机尾的 UTC CSV；无解展示冲突航段，多解展示可行候选，均禁止导出。</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="card error-box" id="global-error"></div>
+
+  <div id="summary"></div>
+  <div id="results"></div>
+</main>
+<footer>仅整链唯一解的机尾允许入仓 · 重复时刻双候选求解 · 不存在时刻硬性报错</footer>
+
+<script>
+let currentFile = null;
+let lastResult = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const STATUS_META = {
+  unique:      {label: '唯一解 · 可导出',   cls: 'unique'},
+  no_solution: {label: '无解 · 禁止导出',   cls: 'no_solution'},
+  multiple:    {label: '多解 · 禁止导出',   cls: 'multiple'},
+  error:       {label: '数据错误 · 禁止导出', cls: 'error'},
+};
+
+$('fileInput').addEventListener('change', (e) => {
+  currentFile = e.target.files[0] || null;
+  $('fileName').textContent = currentFile ? currentFile.name : '未选择文件';
+  $('solveBtn').disabled = !currentFile;
+});
+
+$('sampleBtn').addEventListener('click', async () => {
+  const resp = await fetch('/api/sample');
+  const blob = await resp.blob();
+  currentFile = new File([blob], 'dst_sample.csv', {type: 'text/csv'});
+  $('fileName').textContent = '已载入内置样例 dst_sample.csv';
+  $('solveBtn').disabled = false;
+  $('fileInput').value = '';
+});
+
+$('solveBtn').addEventListener('click', async () => {
+  hideGlobalError();
+  $('results').innerHTML = '';
+  $('summary').innerHTML = '';
+  $('exportAllBtn').disabled = true;
+  const fd = new FormData();
+  fd.append('file', currentFile);
+  $('solveBtn').disabled = true;
+  try {
+    const resp = await fetch('/api/solve', {method: 'POST', body: fd});
+    const data = await resp.json();
+    if (!resp.ok) { showGlobalError(data.detail || '求解失败'); return; }
+    lastResult = data;
+    render(data);
+  } catch (err) {
+    showGlobalError('请求失败: ' + err);
+  } finally {
+    $('solveBtn').disabled = false;
+  }
+});
+
+$('exportAllBtn').addEventListener('click', () => doExport('__all__'));
+
+function showGlobalError(msg) {
+  const el = $('global-error');
+  el.textContent = '⚠ ' + msg;
+  el.style.display = 'block';
+}
+function hideGlobalError() { $('global-error').style.display = 'none'; }
+
+function render(data) {
+  const s = data.summary;
+  $('summary').innerHTML = `<div class="summary-chips">
+    <span class="chip">数据行 ${s.rows}</span>
+    <span class="chip">机尾 ${s.total_tails}</span>
+    <span class="chip green">唯一解 ${s.unique}</span>
+    <span class="chip red">无解 ${s.no_solution}</span>
+    <span class="chip amber">多解 ${s.multiple}</span>
+    <span class="chip red">错误 ${s.error}</span>
+  </div>`;
+  $('exportAllBtn').disabled = s.unique === 0;
+  $('results').innerHTML = data.tails.map(renderTail).join('');
+  document.querySelectorAll('[data-export-tail]').forEach(btn => {
+    btn.addEventListener('click', () => doExport(btn.dataset.exportTail));
+  });
+}
+
+function renderTail(t) {
+  const meta = STATUS_META[t.status];
+  let body = '';
+  if (t.status === 'unique') body = renderUnique(t);
+  else if (t.status === 'no_solution') body = renderNoSolution(t);
+  else if (t.status === 'multiple') body = renderMultiple(t);
+  else body = renderError(t);
+
+  const exportBtn = t.status === 'unique'
+    ? `<button class="export" data-export-tail="${esc(t.tail)}">⬇ 导出该机尾 UTC CSV</button>` : '';
+  return `<div class="card">
+    <div class="tail-head">
+      <h2>✈ ${esc(t.tail)}</h2>
+      <span class="badge ${meta.cls}">${meta.label}</span>
+      <span class="spacer"></span>${exportBtn}
+    </div>${body}</div>`;
+}
+
+function segTable(t, chosenPairs) {
+  const chosen = chosenPairs || {};
+  const rows = t.segments.map(seg => {
+    const depC = seg.dep_candidates.map(c => candHtml(c, chosen[seg.seq], 'dep')).join('<br>');
+    const arrC = seg.arr_candidates.map(c => candHtml(c, chosen[seg.seq], 'arr')).join('<br>');
+    const depAmb = seg.dep_candidates.length > 1 ? ' <span class="cand">⧉重复</span>' : '';
+    const arrAmb = seg.arr_candidates.length > 1 ? ' <span class="cand">⧉重复</span>' : '';
+    return `<tr>
+      <td>${seg.seq}</td>
+      <td>${esc(seg.dep_local)}<br><span class="note">${esc(seg.dep_tz)}</span>${depAmb}</td>
+      <td>${esc(seg.arr_local)}<br><span class="note">${esc(seg.arr_tz)}</span>${arrAmb}</td>
+      <td>[${seg.dur_min}, ${seg.dur_max}]</td>
+      <td>${depC}</td><td>${arrC}</td>
+    </tr>`;
+  }).join('');
+  return `<table><thead><tr>
+    <th>seq</th><th>起飞当地</th><th>落地当地</th><th>时长区间(分)</th>
+    <th>起飞 UTC 候选</th><th>落地 UTC 候选</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function candHtml(utc, chosenPair, kind) {
+  if (chosenPair && chosenPair[kind] === utc) return `<span class="chosen">✔ ${esc(utc)}</span>`;
+  return esc(utc);
+}
+
+function renderUnique(t) {
+  const chosen = {};
+  t.solution.forEach(s => { chosen[s.seq] = {dep: s.dep_utc, arr: s.arr_utc}; });
+  const solRows = t.solution.map(s =>
+    `<tr><td>${s.seq}</td><td>${s.dep_utc}</td><td>${s.arr_utc}</td><td>${s.duration_minutes}</td></tr>`
+  ).join('');
+  return `
+    <p class="note">整链存在唯一解，✔ 为最终入仓时刻：</p>
+    ${segTable(t, chosen)}
+    <h4 style="margin:14px 0 4px">导出内容（UTC）</h4>
+    <table><thead><tr><th>seq</th><th>dep_utc</th><th>arr_utc</th><th>时长(分)</th></tr></thead>
+    <tbody>${solRows}</tbody></table>`;
+}
+
+function renderNoSolution(t) {
+  const c = t.conflict;
+  const prev = (c.previous_arrival_candidates || []).map(x => `<li>${esc(x)}</li>`).join('');
+  return `
+    <div class="conflict-box">
+      <b>⛔ 冲突航段：seq=${c.segment_seq}（第 ${c.row} 行）</b><br>${esc(c.message)}
+      ${prev ? `<div class="note">上一段落地候选：<ul style="margin:4px 0">${prev}</ul></div>` : ''}
+    </div>
+    <p class="note">各航段候选如下（⧉ 表示夏令时拨回产生的重复时刻，两个候选均参与求解）：</p>
+    ${segTable(t)}`;
+}
+
+function renderMultiple(t) {
+  const n = t.solution_count + (t.solution_count_truncated ? '+' : '');
+  const blocks = t.solutions.map((sol, i) => {
+    const rows = sol.map(s =>
+      `<tr><td>${s.seq}</td><td>${s.dep_utc}</td><td>${s.arr_utc}</td><td>${s.duration_minutes}</td></tr>`
+    ).join('');
+    return `<div class="sol-block"><h4>候选链 #${i + 1}</h4>
+      <table><thead><tr><th>seq</th><th>dep_utc</th><th>arr_utc</th><th>时长(分)</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  const more = t.solutions.length < t.solution_count
+    ? `<p class="note">… 其余候选已省略，请收紧时长区间或修正数据后重试。</p>` : '';
+  return `
+    <div class="warn-box">⚠ 整链存在 <b>${n}</b> 条可行候选，无法确定唯一入仓时刻，禁止导出该机尾。</div>
+    ${blocks}${more}
+    <p class="note">各航段候选明细：</p>
+    ${segTable(t)}`;
+}
+
+function renderError(t) {
+  const items = t.errors.map(e =>
+    `<li>${e.row ? `第 ${e.row} 行：` : ''}${e.messages.map(esc).join('；')}</li>`).join('');
+  return `<div class="error-box"><b>⛔ 数据错误，整架机尾禁止导出：</b><ul style="margin:6px 0">${items}</ul></div>`;
+}
+
+async function doExport(tail) {
+  if (!currentFile) return;
+  const fd = new FormData();
+  fd.append('file', currentFile);
+  fd.append('tail', tail);
+  const resp = await fetch('/api/export', {method: 'POST', body: fd});
+  if (!resp.ok) {
+    let msg = '导出被拒绝';
+    try { msg = (await resp.json()).detail || msg; } catch (e) {}
+    alert('⚠ ' + msg);
+    return;
+  }
+  const blob = await resp.blob();
+  const dispo = resp.headers.get('Content-Disposition') || '';
+  const m = dispo.match(/filename="?([^";]+)"?/);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = m ? m[1] : 'utc_export.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

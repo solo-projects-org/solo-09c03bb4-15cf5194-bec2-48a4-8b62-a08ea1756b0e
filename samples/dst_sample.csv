@@ -1,0 +1,12 @@
+tail_number,seq,dep_local,dep_tz,arr_local,arr_tz,duration_min_minutes,duration_max_minutes
+B-7001,1,2026-10-25 00:30,Europe/London,2026-10-25 02:15,Europe/Berlin,90,130
+B-7001,2,2026-10-25 02:50,Europe/Berlin,2026-10-25 04:20,Europe/Copenhagen,60,120
+B-7001,3,2026-10-25 06:10,Europe/Copenhagen,2026-10-25 07:55,Europe/Helsinki,45,90
+B-7002,1,2026-03-29 02:30,Europe/Berlin,2026-03-29 09:30,Asia/Dubai,300,420
+B-7002,2,2026-03-29 12:00,Asia/Dubai,2026-03-29 15:00,Europe/Berlin,300,400
+B-7003,1,2026-06-01 20:00,America/New_York,2026-06-02 08:00,Europe/London,300,500
+B-7003,2,2026-06-02 06:30,Europe/London,2026-06-02 08:50,Europe/Paris,60,120
+B-7004,1,2026-10-25 02:10,Europe/Berlin,2026-10-25 02:50,Europe/Berlin,20,60
+B-7004,2,2026-10-25 03:40,Europe/Berlin,2026-10-25 05:10,Europe/Berlin,60,120
+B-7005,1,2026-11-01 01:30,America/New_York,2026-11-01 06:30,America/Los_Angeles,330,500
+B-7005,2,2026-11-01 09:00,America/Los_Angeles,2026-11-01 12:30,America/Denver,110,160
